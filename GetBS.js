@@ -1,94 +1,109 @@
 import plugin from '../../lib/plugins/plugin.js';
 import fetch from 'node-fetch';
+import fs from 'fs';
+import path from 'path';
+import { segment } from 'oicq'; // 导入segment
 
 export default class BaisiPlugin extends plugin {
   constructor() {
     super({
       name: '雪糕我爱',
-      dsc: '获取白丝图片',
+      dsc: '仅限指定群聊使用的白丝图片插件',
       event: 'message',
       priority: 5000,
       rule: [
         {
-          reg: '^wwbs$',
+          reg: /^ww(开启|关闭)bs$/, // 修正正则表达式，添加/包裹
+          fnc: 'togglePlugin'
+        },
+        {
+          reg: /^wwbs$/, // 修正正则表达式，添加/包裹
           fnc: 'getBaisiImage'
         }
       ]
     });
-    
-    // 缓存上次请求时间，防止频繁请求
+
+    this.configPath = path.join(process.cwd(), 'data/baisi-plugin');
+    this.configFile = path.join(this.configPath, 'config.json');
+    this.allowedGroups = [];
+    this.initConfig();
     this.lastRequestTime = 0;
-    this.cooldown = 5000; // 3秒冷却时间
+    this.cooldown = 3000;
   }
 
-  // 获取百思不得姐图片
-  async getBaisiImage(e) {
-    // 检查冷却时间
-    const now = Date.now();
-    if (now - this.lastRequestTime < this.cooldown) {
-      await e.reply('⌛ 请求太频繁了，请稍后再试~');
-      return true;
+  initConfig() {
+    if (!fs.existsSync(this.configPath)) fs.mkdirSync(this.configPath, { recursive: true });
+    if (fs.existsSync(this.configFile)) {
+      try {
+        this.allowedGroups = JSON.parse(fs.readFileSync(this.configFile, 'utf8'));
+      } catch (e) {
+        this.allowedGroups = [];
+        this.saveConfig();
+      }
+    } else {
+      this.saveConfig();
     }
-    this.lastRequestTime = now;
+  }
 
+  saveConfig() {
+    fs.writeFileSync(this.configFile, JSON.stringify(this.allowedGroups, null, 2));
+  }
+
+  async togglePlugin(e) {
+    if (!e.isMaster) return e.reply('只有主人才能执行此操作！，请联系主人使用');
+    if (!e.isGroup) return e.reply('请在群聊中操作！');
+    
+    const action = e.msg.match(/开启|关闭/)[0];
+    const groupId = e.group_id;
+    
+    if (action === '开启') {
+      if (!this.allowedGroups.includes(groupId)) {
+        this.allowedGroups.push(groupId);
+        this.saveConfig();
+        return e.reply(`已在群 ${groupId} 开启功能`);
+      }
+      return e.reply('该群已开启');
+    } else {
+      this.allowedGroups = this.allowedGroups.filter(id => id !== groupId);
+      this.saveConfig();
+      return e.reply(`已在群 ${groupId} 关闭功能`);
+    }
+  }
+
+  async getBaisiImage(e) {
+    if (!e.isGroup || !this.allowedGroups.includes(e.group_id)) {
+      return e.reply('该功能仅在指定群聊可用，联系主人开启');
+    }
+    
+    if (Date.now() - this.lastRequestTime < this.cooldown) {
+      return e.reply('⌛ 冷却中，稍后再试');
+    }
+    this.lastRequestTime = Date.now();
+    
     try {
-      await e.reply('🚀 正在获取白丝（雪糕）图片...');
-
-      // 设置请求头部
-      const headers = {
-        'User-Agent': 'xiaoxiaoapi/1.0.0 (https://xxapi.cn)',
-        'Accept': 'application/json'
-      };
-
-      // 发送API请求
-      const response = await fetch('https://v2.xxapi.cn/api/baisi', { headers });
+      await e.reply('🚀 正在获取图片...');
+      const res = await fetch('https://v2.xxapi.cn/api/baisi', {
+        headers: { 'User-Agent': 'xiaoxiaoapi/1.0.0' }
+      });
+      if (!res.ok) throw new Error('API请求失败');
+      const data = await res.json();
+      if (data.code !== 200 || !data.data) throw new Error('无效数据');
       
-      // 检查响应状态
-      if (!response.ok) {
-        throw new Error(`API请求失败: ${response.status} ${response.statusText}`);
-      }
-
-      // 解析JSON数据
-      const result = await response.json();
-      
-      // 验证响应数据
-      if (result.code !== 200 || !result.data) {
-        throw new Error(`API返回无效数据: ${JSON.stringify(result)}`);
-      }
-
-      // 发送图片
-      await e.reply(segment.image(result.data));
-      
-      // 添加随机搞笑文案
-      const funnyTexts = [
-        '😂 斯哈斯哈真好吃！',
-        '🤣 美味！！！！',
-        '😆 人间美味大奶糕',
-        '🤪 卡哇伊戴斯',
-        '😜 好可爱'
-      ];
-      const randomText = funnyTexts[Math.floor(Math.random() * funnyTexts.length)];
-      await e.reply(randomText);
-      
-      return true;
+      await e.reply(segment.image(data.data));
+      const texts = ['😂 斯哈斯哈', '🤣 美味！', '😆 大奶糕', '🤪 卡哇伊', '😜 好可爱'];
+      await e.reply(texts[Math.floor(Math.random() * texts.length)]);
     } catch (error) {
-      console.error('获取雪糕失败:', error);
-      
-      // 错误处理 - 发送备用图片
-      const fallbackImages = [
+      console.error(error);
+      const fallbacks = [
         'https://cdn.api-m.com/images/baisi/fallback1.jpg',
         'https://cdn.api-m.com/images/baisi/fallback2.jpg',
         'https://cdn.api-m.com/images/baisi/fallback3.jpg'
       ];
-      const randomImage = fallbackImages[Math.floor(Math.random() * fallbackImages.length)];
-      
       await e.reply([
-        '❌ 获取图片失败，可能是网络问题或API限制',
-        segment.image(randomImage),
-        '💡 你看你妈呢~'
+        '❌ 获取失败，备用图片奉上',
+        segment.image(fallbacks[Math.floor(Math.random() * fallbacks.length)]),
+        '💡 请稍后重试'
       ]);
-      
-      return true;
     }
   }
 }
