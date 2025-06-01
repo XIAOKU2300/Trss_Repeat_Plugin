@@ -1,3 +1,4 @@
+//刚看的开发文档拉了坨大的写出来的插件
 import plugin from '../../lib/plugins/plugin.js';
 import fetch from 'node-fetch';
 import fs from 'fs';
